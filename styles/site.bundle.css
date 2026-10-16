@@ -161,7 +161,7 @@ html.site-loading:not(.site-animations-released) #inicio .hero-stagger-item {
 
 @media (width<=1199px) {
     .hero-profile-new {
-        right: -15vw
+        /*right: -15vw*/
     }
 }
 
@@ -178,6 +178,7 @@ html.site-loading:not(.site-animations-released) #inicio .hero-stagger-item {
         max-height: none;
         inset: auto -38rem -7% auto;
         translate: none
+
     }
 }
 
@@ -214,7 +215,7 @@ html.site-loading:not(.site-animations-released) #inicio .hero-stagger-item {
 
 @media (width<=560px) {
     .hero-profile-new {
-        right: -35rem
+        /*right: -35rem*/
     }
 }
 
@@ -333,7 +334,9 @@ html.site-loading:not(.site-animations-released) #inicio .hero-stagger-item {
 
         max-height: none;
         inset: auto -15vw -7% auto;
-        translate: none
+        translate: none;
+        inset: auto -0vw -7% auto;
+  
     }
 
     .hero .hero-copy {
