@@ -3,202 +3,186 @@
 
   const bookingSelector =
     ".site-booking-button, .hero-cta, #avaliacao-tratamentos .treatments-booking, .clinic-footer-booking";
-  const phone = "5521969533698";
-  const services = [
-    "Avaliação individualizada",
-    "Emagrecimento Personalizado",
-    "Terapia Nutricional Injetável",
-    "Bioimpedância e Avaliação Corporal",
-    "Lipedema e Pós-operatório",
-  ];
+  const calendlyUrl =
+    "https://calendly.com/leo-dev-agendamento/agendamento?hide_event_type_details=1&hide_gdpr_banner=1&background_color=fcf7f3&text_color=30221f&primary_color=89503d";
+  const calendlyScriptUrl =
+    "https://assets.calendly.com/assets/external/widget.js";
+  // Preview only. Production branding must be managed in the Calendly account.
+  const previewBrandMask = ["localhost", "127.0.0.1", "[::1]"].includes(
+    window.location.hostname,
+  );
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const state = {
     step: 1,
-    service: services[0],
-    name: "",
-    date: "",
-    period: "Manhã",
-    consent: false,
+    scheduled: false,
   };
   let dialog;
-  let privacyDialog;
   let opener;
   let closeTimer;
-
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, function (char) {
-      return {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      }[char];
-    });
-  }
-
-  function localToday() {
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 10);
-  }
-
-  function displayDate(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const parts = value.split("-");
-    return parts[2] + "/" + parts[1] + "/" + parts[0];
-  }
-
-  function messageUrl() {
-    const message = [
-      "Olá, Clínica Luana Cabral! Gostaria de solicitar uma avaliação.",
-      "Nome: " + state.name.trim(),
-      "Interesse: " + state.service,
-      "Preferência: " + displayDate(state.date) + " — " + state.period,
-      "Autorizo o uso destas informações para responder à minha solicitação. Entendo que a data e o período dependem de confirmação da equipe.",
-    ].join("\n");
-    return "https://wa.me/" + phone + "?text=" + encodeURIComponent(message);
-  }
+  let calendlyScriptPromise;
+  let calendarStarted = false;
+  let calendarGeneration = 0;
+  let calendarTimer;
+  let calendarReady = false;
 
   function stepsMarkup() {
-    const labels = ["Seu cuidado", "Sua preferência", "Revisão"];
+    const labels = ["Horários", "Seus dados", "Confirmação"];
     return (
-      '<ol class="clinic-booking-steps" aria-label="Etapa ' +
-      state.step +
-      ' de 3">' +
-      labels
-        .map(function (label, index) {
-          const number = index + 1;
-          const status =
-            number < state.step
-              ? "is-complete"
-              : number === state.step
-                ? "is-current"
-                : "";
-          return (
-            '<li class="' +
-            status +
-            '"' +
-            (number === state.step ? ' aria-current="step"' : "") +
-            '><span class="clinic-booking-step-number" aria-hidden="true">' +
-            number +
-            "</span><span>" +
-            label +
-            "</span></li>"
-          );
-        })
-        .join("") +
-      "</ol>"
+      '<ol class="clinic-booking-steps" aria-label="Etapa ' + state.step + ' de 3">' +
+      labels.map(function (label, index) {
+        const number = index + 1;
+        const status = number < state.step ? "is-complete" : number === state.step ? "is-current" : "";
+        return '<li class="' + status + '"' +
+          (number === state.step ? ' aria-current="step"' : "") +
+          '><span class="clinic-booking-step-number" aria-hidden="true">' + number +
+          "</span><span>" + label + "</span></li>";
+      }).join("") + "</ol>"
     );
   }
 
-  function stepMarkup() {
-    if (state.step === 1) {
-      return (
-        '<div class="clinic-booking-panel" data-step="1">' +
-        '<label class="clinic-booking-label" for="clinic-booking-service">Qual cuidado você procura?</label>' +
-        '<select class="clinic-booking-control" id="clinic-booking-service" name="service">' +
-        services
-          .map(function (item) {
-            return (
-              '<option value="' +
-              escapeHtml(item) +
-              '"' +
-              (item === state.service ? " selected" : "") +
-              ">" +
-              escapeHtml(item) +
-              "</option>"
-            );
-          })
-          .join("") +
-        "</select>" +
-        '<p class="clinic-booking-hint">Ainda não sabe? Escolha a avaliação. Vamos entender seus objetivos com calma.</p>' +
-        '<div class="clinic-booking-actions"><button class="clinic-booking-primary" type="button" data-booking-next>Continuar</button></div>' +
-        "</div>"
-      );
-    }
-
-    if (state.step === 2) {
-      return (
-        '<div class="clinic-booking-panel" data-step="2">' +
-        '<div class="clinic-booking-field"><label class="clinic-booking-label" for="clinic-booking-name">Nome e sobrenome</label>' +
-        '<input class="clinic-booking-control" id="clinic-booking-name" name="name" type="text" autocomplete="name" maxlength="120" required value="' +
-        escapeHtml(state.name) +
-        '"></div>' +
-        '<div class="clinic-booking-field"><label class="clinic-booking-label" for="clinic-booking-date">Data de preferência</label>' +
-        '<input class="clinic-booking-control" id="clinic-booking-date" name="date" type="date" min="' +
-        localToday() +
-        '" required value="' +
-        escapeHtml(state.date) +
-        '"></div>' +
-        '<div class="clinic-booking-field"><label class="clinic-booking-label" for="clinic-booking-period">Período</label>' +
-        '<select class="clinic-booking-control" id="clinic-booking-period" name="period">' +
-        ["Manhã", "Tarde", "Sem preferência"]
-          .map(function (item) {
-            return (
-              "<option" +
-              (item === state.period ? " selected" : "") +
-              ">" +
-              item +
-              "</option>"
-            );
-          })
-          .join("") +
-        "</select></div>" +
-        '<p class="clinic-booking-hint">A data é uma preferência, não uma reserva. Não informe dados de saúde neste formulário.</p>' +
-        '<p class="clinic-booking-error" id="clinic-booking-error" role="alert" hidden></p>' +
-        '<div class="clinic-booking-actions"><button class="clinic-booking-secondary" type="button" data-booking-back>Voltar</button>' +
-        '<button class="clinic-booking-primary" type="button" data-booking-next>Continuar</button></div></div>'
-      );
-    }
-
+  function panelsMarkup() {
     return (
-      '<div class="clinic-booking-panel" data-step="3">' +
-      '<dl class="clinic-booking-summary">' +
-      "<div><dt>Seu nome</dt><dd>" +
-      escapeHtml(state.name.trim()) +
-      "</dd></div>" +
-      "<div><dt>Cuidado</dt><dd>" +
-      escapeHtml(state.service) +
-      "</dd></div>" +
-      "<div><dt>Preferência</dt><dd>" +
-      escapeHtml(displayDate(state.date)) +
-      " · " +
-      escapeHtml(state.period) +
-      "</dd></div>" +
-      "</dl>" +
-      '<label class="clinic-booking-consent"><input type="checkbox" id="clinic-booking-consent"' +
-      (state.consent ? " checked" : "") +
-      "><span>Autorizo o uso do meu nome e das preferências informadas para responder a esta solicitação pelo WhatsApp.</span></label>" +
-      '<button class="clinic-booking-privacy-link" type="button" data-booking-privacy>Ler detalhes</button>' +
-      '<p class="clinic-booking-hint">Este aceite é para contato. O consentimento para tratamentos será tratado individualmente com a equipe.</p>' +
-      '<div class="clinic-booking-actions"><button class="clinic-booking-secondary" type="button" data-booking-back>Voltar</button>' +
-      '<a class="clinic-booking-primary clinic-booking-whatsapp" href="' +
-      (state.consent ? messageUrl() : "#") +
-      '" target="_blank" rel="noopener noreferrer"' +
-      (state.consent ? "" : ' aria-disabled="true" tabindex="-1"') +
-      ">Continuar no WhatsApp</a></div>" +
-      '<p class="clinic-booking-fineprint">Revise a mensagem e toque em enviar no WhatsApp para concluir a solicitação.</p>' +
-      "</div>"
+      // One persistent widget spans both the slot selection and contact details steps.
+      '<section class="clinic-booking-panel" data-step="1 2" aria-label="Calendário de agendamento">' +
+      '<p class="clinic-booking-calendar-status" role="status" aria-live="polite">Carregando horários disponíveis…</p>' +
+      '<div class="clinic-booking-calendar-frame">' +
+      '<div class="calendly-inline-widget clinic-booking-calendar" id="clinic-booking-calendly" data-auto-load="false" data-url="' + calendlyUrl + '" aria-busy="true"></div>' +
+      '<span class="clinic-booking-calendar-brand-mask" aria-hidden="true"' +
+      (previewBrandMask ? "" : " hidden") + '></span></div>' +
+      '<div class="clinic-booking-calendar-fallback" role="alert" hidden><p>Não foi possível exibir os horários. Tente novamente ou abra o Calendly para concluir seu agendamento.</p>' +
+      '<div class="clinic-booking-actions"><button class="clinic-booking-secondary" type="button" data-booking-calendar-retry>Tentar novamente</button>' +
+      '<a class="clinic-booking-primary" data-booking-calendar-link href="' + calendlyUrl + '" target="_blank" rel="noopener noreferrer">Abrir Calendly<span class="clinic-booking-sr-only"> em outra aba</span></a></div></div>' +
+      '</section>' +
+      '<section class="clinic-booking-panel clinic-booking-confirmation" data-step="3" aria-label="Orientações após o agendamento" hidden>' +
+      '<div class="clinic-booking-confirmation-cards">' +
+      '<div class="clinic-booking-confirmation-card">' +
+      '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="9" width="38" height="30" rx="4"/><path d="m6 11 18 15 18-15"/></svg>' +
+      '<div><h3>E-mail de confirmação</h3><p>Verifique sua caixa de entrada e a pasta de spam.</p></div></div>' +
+      '<div class="clinic-booking-confirmation-card">' +
+      '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="7" y="9" width="34" height="33" rx="4"/><path d="M7 20h34M16 5v10M32 5v10"/></svg>' +
+      '<div><h3>Detalhes do agendamento</h3><p>Confira a data, o horário, o endereço e as orientações no e-mail.</p></div></div>' +
+      '<div class="clinic-booking-confirmation-card">' +
+      '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 35h32c-5-5-5-8-5-15a11 11 0 0 0-22 0c0 7 0 10-5 15ZM20 40a4 4 0 0 0 8 0M22 9V7a2 2 0 0 1 4 0v2"/></svg>' +
+      '<div><h3>Remarcação ou cancelamento</h3><p>Precisa alterar seu horário? Utilize as opções disponíveis no e-mail de confirmação.</p></div></div></div>' +
+      '<div class="clinic-booking-confirmation-footer"><p>Agradecemos a sua confiança. Será um prazer receber você! ' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0l-1 1-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/></svg></p>' +
+      '<button class="clinic-booking-primary" type="button" data-booking-close>Concluir</button></div></section>'
     );
   }
 
   function render(focusSelector) {
-    dialog.querySelector(".clinic-booking-steps-slot").innerHTML =
-      stepsMarkup();
-    dialog.querySelector(".clinic-booking-content").innerHTML = stepMarkup();
-    dialog.querySelector(".clinic-booking-scroll").scrollTop = 0;
-    if (focusSelector)
+    const confirmed = state.step === 3;
+    dialog.classList.toggle("is-calendly-step", state.step < 3);
+    dialog.classList.toggle("is-confirmation-step", confirmed);
+    dialog.querySelector("#clinic-booking-title").textContent = confirmed ? "Tudo certo!" : "Vamos cuidar de você?";
+    dialog.querySelector("#clinic-booking-description").textContent = confirmed
+      ? "Seu agendamento foi concluído com sucesso."
+      : state.step === 2
+      ? "Confira seu horário e preencha seus dados para concluir sua avaliação."
+      : "Escolha um horário e informe seus dados para sua avaliação.";
+    dialog.querySelectorAll("[data-booking-success]").forEach(function (element) {
+      element.hidden = !confirmed;
+    });
+    dialog.querySelector(".clinic-booking-steps-slot").innerHTML = stepsMarkup();
+    dialog.querySelectorAll("[data-step]").forEach(function (panel) {
+      panel.hidden = !panel.dataset.step.split(" ").includes(String(state.step));
+    });
+    if (focusSelector) {
+      dialog.querySelector(".clinic-booking-scroll").scrollTop = 0;
       dialog.querySelector(focusSelector)?.focus({ preventScroll: true });
+    }
+  }
+
+  function clearCalendar() {
+    calendarGeneration += 1;
+    window.clearTimeout(calendarTimer);
+    calendarStarted = false;
+    calendarReady = false;
+    const container = dialog.querySelector("#clinic-booking-calendly");
+    container.replaceChildren();
+    container.style.removeProperty("height");
   }
 
   function resetState() {
     state.step = 1;
-    state.service = services[0];
-    state.name = "";
-    state.date = "";
-    state.period = "Manhã";
-    state.consent = false;
+    state.scheduled = false;
+    dialog.querySelector(".clinic-booking-scroll").scrollTop = 0;
+    clearCalendar();
+  }
+
+  function loadCalendly() {
+    if (window.Calendly?.initInlineWidget) return Promise.resolve();
+    if (calendlyScriptPromise) return calendlyScriptPromise;
+    calendlyScriptPromise = new Promise(function (resolve, reject) {
+      let script = document.querySelector('script[src="' + calendlyScriptUrl + '"]');
+      const existing = Boolean(script);
+      if (!script) {
+        script = document.createElement("script");
+        script.src = calendlyScriptUrl;
+        script.async = true;
+      }
+      const timeout = window.setTimeout(fail, 15000);
+      function cleanup() {
+        window.clearTimeout(timeout);
+        script.removeEventListener("load", loaded);
+        script.removeEventListener("error", fail);
+      }
+      function loaded() {
+        if (!window.Calendly?.initInlineWidget) return fail();
+        cleanup();
+        resolve();
+      }
+      function fail() {
+        cleanup();
+        script.remove();
+        reject(new Error("Calendly indisponível"));
+      }
+      script.addEventListener("load", loaded, { once: true });
+      script.addEventListener("error", fail, { once: true });
+      if (!existing) document.head.append(script);
+    }).catch(function (error) {
+      calendlyScriptPromise = null;
+      throw error;
+    });
+    return calendlyScriptPromise;
+  }
+
+  function setCalendarStatus(status) {
+    const container = dialog.querySelector("#clinic-booking-calendly");
+    container.hidden = status === "error";
+    container.setAttribute("aria-busy", String(status === "loading"));
+    dialog.querySelector(".clinic-booking-calendar-status").hidden = status !== "loading";
+    dialog.querySelector(".clinic-booking-calendar-fallback").hidden = status !== "error";
+  }
+
+  async function initializeCalendly(force) {
+    if (!dialog?.open || state.scheduled) return;
+    if (!force && calendarStarted) return;
+    clearCalendar();
+    calendarStarted = true;
+    state.step = 1;
+    render();
+    const generation = calendarGeneration;
+    const container = dialog.querySelector("#clinic-booking-calendly");
+    setCalendarStatus("loading");
+    try {
+      await loadCalendly();
+      if (generation !== calendarGeneration || !dialog.open) return;
+      window.Calendly.initInlineWidget({ url: calendlyUrl, parentElement: container });
+      const iframe = container.querySelector("iframe");
+      if (!iframe) throw new Error("Calendly não inicializado");
+      iframe.title = "Calendly — selecionar data e horário para avaliação";
+      iframe.addEventListener("error", function () {
+        if (generation !== calendarGeneration || calendarReady) return;
+        window.clearTimeout(calendarTimer);
+        setCalendarStatus("error");
+      }, { once: true });
+      calendarTimer = window.setTimeout(function () {
+        if (generation === calendarGeneration && !calendarReady) setCalendarStatus("error");
+      }, 20000);
+    } catch (error) {
+      if (generation === calendarGeneration) setCalendarStatus("error");
+    }
   }
 
   function ensureDialog() {
@@ -213,8 +197,12 @@
         '<div class="clinic-booking-scroll"><button class="clinic-booking-close" type="button" aria-label="Fechar agendamento" data-booking-close>×</button>' +
         '<p class="clinic-booking-eyebrow">SEU MOMENTO DE CUIDADO</p>' +
         '<h2 id="clinic-booking-title" tabindex="-1">Vamos cuidar de você?</h2>' +
-        '<p class="clinic-booking-intro" id="clinic-booking-description">Solicite uma avaliação. A equipe confirma a disponibilidade pelo WhatsApp.</p>' +
-        '<div class="clinic-booking-steps-slot" aria-live="polite"></div><div class="clinic-booking-content"></div></div>';
+        '<p class="clinic-booking-intro" id="clinic-booking-description">Escolha um horário e informe seus dados para sua avaliação.</p>' +
+        '<p class="clinic-booking-success-note" data-booking-success hidden>Em instantes, você receberá no seu e-mail todas as informações da sua avaliação, incluindo data, horário e endereço.</p>' +
+        '<svg class="clinic-booking-success-icon" viewBox="0 0 180 160" aria-hidden="true" data-booking-success hidden>' +
+        '<circle cx="85" cy="80" r="61"/><path d="m61 83 16 17 36-40" class="clinic-booking-success-check"/>' +
+        '<path d="m17 44-10-6M28 30l-5-9M159 70l10-4M161 91l11 1M154 111l9 6"/></svg>' +
+        '<div class="clinic-booking-steps-slot" aria-live="polite"></div><div class="clinic-booking-content">' + panelsMarkup() + '</div></div>';
       dialog.addEventListener("cancel", function (event) {
         event.preventDefault();
         closeFlow();
@@ -224,34 +212,6 @@
       });
     }
     if (!dialog.isConnected) document.body.append(dialog);
-    if (!privacyDialog) {
-      privacyDialog = document.createElement("dialog");
-      privacyDialog.id = "clinic-booking-privacy";
-      privacyDialog.className = "clinic-booking-dialog clinic-booking-privacy";
-      privacyDialog.setAttribute(
-        "aria-labelledby",
-        "clinic-booking-privacy-title",
-      );
-      privacyDialog.setAttribute("data-lenis-prevent", "true");
-      privacyDialog.innerHTML =
-        '<div class="clinic-booking-scroll"><button class="clinic-booking-close" type="button" aria-label="Fechar privacidade" data-booking-privacy-close>×</button>' +
-        '<p class="clinic-booking-eyebrow">CLÍNICA Luana Cabral</p><h2 id="clinic-booking-privacy-title" tabindex="-1">Privacidade e consentimento</h2>' +
-        "<p>Você decide quando compartilhar seus dados.</p>" +
-        "<p>O formulário utiliza seu nome, interesse e preferência de data para preparar uma mensagem. Os dados ficam apenas nesta página e não são enviados a um banco de dados por este site.</p>" +
-        "<p>Ao continuar no WhatsApp, essas informações integram o link aberto no serviço. O envio da mensagem depende da sua ação no WhatsApp e segue também as regras de privacidade desse serviço.</p>" +
-        '<p>Para solicitar esclarecimentos, correção ou exclusão de informações recebidas pela clínica, entre em contato pelo <a href="https://wa.me/' +
-        phone +
-        '" target="_blank" rel="noopener noreferrer">(21) 96953-3698</a>.</p>' +
-        "<p>Esta autorização de contato não substitui avaliação ou consentimento para tratamentos. Não envie informações sensíveis de saúde pelo formulário.</p></div>";
-      privacyDialog.addEventListener("click", function (event) {
-        if (event.target === privacyDialog) closePrivacy();
-      });
-      privacyDialog.addEventListener("cancel", function (event) {
-        event.preventDefault();
-        closePrivacy();
-      });
-    }
-    if (!privacyDialog.isConnected) document.body.append(privacyDialog);
   }
 
   function openFlow(trigger) {
@@ -271,60 +231,20 @@
     }
     dialog.showModal();
     document.documentElement.classList.add("clinic-booking-open");
-    dialog
-      .querySelector("#clinic-booking-title")
-      .focus({ preventScroll: true });
-  }
-
-  function closePrivacy() {
-    if (!privacyDialog?.open) return;
-    privacyDialog.close();
-    dialog
-      .querySelector("[data-booking-privacy]")
-      ?.focus({ preventScroll: true });
+    dialog.querySelector("#clinic-booking-title").focus({ preventScroll: true });
+    initializeCalendly();
   }
 
   function closeFlow() {
     if (!dialog?.open || dialog.classList.contains("is-closing")) return;
-    if (privacyDialog?.open) privacyDialog.close();
     dialog.classList.add("is-closing");
-    closeTimer = window.setTimeout(
-      function () {
-        dialog.close();
-        dialog.classList.remove("is-closing");
-        document.documentElement.classList.remove("clinic-booking-open");
-        if (opener?.isConnected) opener.focus({ preventScroll: true });
-      },
-      reducedMotion.matches ? 0 : 180,
-    );
-  }
-
-  function validatePreference() {
-    const name = dialog.querySelector("#clinic-booking-name");
-    const date = dialog.querySelector("#clinic-booking-date");
-    const error = dialog.querySelector("#clinic-booking-error");
-    state.name = name.value.trim();
-    state.date = date.value;
-    if (!state.name) {
-      error.textContent = "Informe seu nome e sobrenome.";
-      error.hidden = false;
-      name.focus();
-      return false;
-    }
-    if (state.name.length < 2) {
-      error.textContent = "Informe um nome válido.";
-      error.hidden = false;
-      name.focus();
-      return false;
-    }
-    if (!date.value || !date.validity.valid || date.value < localToday()) {
-      error.textContent =
-        "Escolha uma data de preferência válida a partir de hoje.";
-      error.hidden = false;
-      date.focus();
-      return false;
-    }
-    return true;
+    closeTimer = window.setTimeout(function () {
+      dialog.close();
+      dialog.classList.remove("is-closing");
+      clearCalendar();
+      document.documentElement.classList.remove("clinic-booking-open");
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    }, reducedMotion.matches ? 0 : 180);
   }
 
   function annotateTrigger(trigger) {
@@ -334,102 +254,53 @@
   if (window.__clinicPreloaderDone) {
     document.querySelectorAll(bookingSelector).forEach(annotateTrigger);
   } else {
-    window.addEventListener(
-      "clinic:preloader-complete",
-      function () {
-        document.querySelectorAll(bookingSelector).forEach(annotateTrigger);
-      },
-      { once: true },
-    );
+    window.addEventListener("clinic:preloader-complete", function () {
+      document.querySelectorAll(bookingSelector).forEach(annotateTrigger);
+    }, { once: true });
   }
 
-  document.addEventListener(
-    "click",
-    function (event) {
-      const trigger = event.target.closest(bookingSelector);
-      if (trigger && !trigger.closest(".clinic-booking-dialog")) {
-        event.preventDefault();
-        event.stopPropagation();
-        openFlow(trigger);
-        return;
-      }
-      if (event.target.closest("[data-booking-close]")) {
-        closeFlow();
-        return;
-      }
-      if (event.target.closest("[data-booking-privacy-close]")) {
-        closePrivacy();
-        return;
-      }
-      if (event.target.closest("[data-booking-privacy]")) {
-        privacyDialog.showModal();
-        privacyDialog
-          .querySelector("#clinic-booking-privacy-title")
-          .focus({ preventScroll: true });
-        return;
-      }
-      if (event.target.closest("[data-booking-back]")) {
-        state.step = Math.max(1, state.step - 1);
-        render(
-          state.step === 1 ? "#clinic-booking-service" : "#clinic-booking-name",
-        );
-        return;
-      }
-      if (event.target.closest("[data-booking-next]")) {
-        if (state.step === 2 && !validatePreference()) return;
-        state.step = Math.min(3, state.step + 1);
-        render(
-          state.step === 2 ? "#clinic-booking-name" : "#clinic-booking-title",
-        );
-        return;
-      }
-      if (
-        event.target.closest('.clinic-booking-whatsapp[aria-disabled="true"]')
-      )
-        event.preventDefault();
-    },
-    true,
-  );
-
-  document.addEventListener("input", function (event) {
+  document.addEventListener("click", function (event) {
+    const trigger = event.target.closest(bookingSelector);
+    if (trigger && !trigger.closest(".clinic-booking-dialog")) {
+      event.preventDefault();
+      event.stopPropagation();
+      openFlow(trigger);
+      return;
+    }
     if (!dialog?.open || !dialog.contains(event.target)) return;
-    if (event.target.id === "clinic-booking-name")
-      state.name = event.target.value;
-    if (event.target.id === "clinic-booking-date")
-      state.date = event.target.value;
-    const error = dialog.querySelector("#clinic-booking-error");
-    if (error) error.hidden = true;
-  });
+    if (event.target.closest("[data-booking-close]")) closeFlow();
+    else if (event.target.closest("[data-booking-calendar-retry]") && !state.scheduled) {
+      initializeCalendly(true);
+    }
+  }, true);
 
-  document.addEventListener("change", function (event) {
-    if (!dialog?.open || !dialog.contains(event.target)) return;
-    if (event.target.id === "clinic-booking-service")
-      state.service = event.target.value;
-    if (event.target.id === "clinic-booking-period")
-      state.period = event.target.value;
-    if (event.target.id === "clinic-booking-consent") {
-      state.consent = event.target.checked;
-      const link = dialog.querySelector(".clinic-booking-whatsapp");
-      link.href = state.consent ? messageUrl() : "#";
-      if (state.consent) {
-        link.removeAttribute("aria-disabled");
-        link.removeAttribute("tabindex");
-      } else {
-        link.setAttribute("aria-disabled", "true");
-        link.setAttribute("tabindex", "-1");
+  window.addEventListener("message", function (event) {
+    if (!dialog?.open || state.scheduled) return;
+    const iframe = dialog.querySelector("#clinic-booking-calendly iframe");
+    if (!iframe || event.source !== iframe.contentWindow || event.origin !== "https://calendly.com") return;
+    const name = event.data?.event;
+    if (!["calendly.profile_page_viewed", "calendly.event_type_viewed", "calendly.date_and_time_selected", "calendly.page_height", "calendly.event_scheduled"].includes(name)) return;
+    calendarReady = true;
+    window.clearTimeout(calendarTimer);
+    setCalendarStatus("ready");
+    if (name === "calendly.page_height") {
+      const height = Number.parseFloat(event.data.payload?.height);
+      if (Number.isFinite(height) && height >= 320 && height <= 4000) {
+        dialog.querySelector("#clinic-booking-calendly").style.height = Math.ceil(height) + "px";
       }
     }
-  });
-
-  document.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter" || !dialog?.open || privacyDialog?.open) return;
-    if (
-      state.step === 2 &&
-      (event.target.id === "clinic-booking-name" ||
-        event.target.id === "clinic-booking-date")
-    ) {
-      event.preventDefault();
-      dialog.querySelector("[data-booking-next]").click();
+    if (name === "calendly.event_scheduled") {
+      state.scheduled = true;
+      state.step = 3;
+      render("#clinic-booking-title");
+    } else if (name === "calendly.date_and_time_selected" && state.step !== 2) {
+      // Calendly exposes slot selection, not a separate Next-button click event.
+      // Update only the parent UI, preserving the iframe, its focus and form data.
+      state.step = 2;
+      render();
+    } else if ((name === "calendly.event_type_viewed" || name === "calendly.profile_page_viewed") && state.step !== 1) {
+      state.step = 1;
+      render();
     }
   });
 })();
